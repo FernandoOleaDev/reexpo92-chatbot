@@ -89,11 +89,14 @@ def _retrieve(question: str, k: int = 5) -> list[dict]:
 
 
 def _source_url(c: dict) -> str | None:
-    """URL del enlace. Los vídeos van a NUESTRA página (/archivo), no a YouTube."""
+    """URL del enlace. Vídeos → /archivo (no YouTube); fotos → abren su visor en /fotos."""
     st = c.get("source_type")
     if st == "video":
         vid = (c.get("source_id") or "").split("#", 1)[0]
         return f"/archivo?tab=videos&v={vid}" if vid else "/archivo?tab=videos"
+    if st == "photo":
+        pid = c.get("source_id")
+        return f"/fotos?photo={pid}" if pid else "/fotos"
     return c.get("url")
 
 
@@ -175,7 +178,8 @@ def _images_from(strong: list[dict]) -> list[dict]:
                 u = r.get("thumb_url") or r.get("image_url")
                 if u:
                     images.append({"thumb": u, "full": r.get("image_url") or u,
-                                   "caption": r.get("title") or "", "link": "/fotos"})
+                                   "caption": r.get("title") or "",
+                                   "link": f"/fotos?photo={r['id']}"})
         if rm_ids and len(images) < 4:
             rows = db.select("re_memory_images", {
                 "select": "re_memory_id,image_url",
