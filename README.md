@@ -52,7 +52,28 @@ uvicorn app.main:app --reload --port 8000
 | `CORS_ORIGINS` | no | Dominios que pueden llamar a /chat |
 | `EMBED_SECRET` | no | Habilita `/embed` para uso interno |
 
+## Indexado LOCAL (recomendado)
+
+Indexar (cargar el modelo + embeber cientos de documentos) consume mucha RAM y puede
+tumbar una instancia pequeña de Railway (OOM). **Solución:** indexa desde tu ordenador y
+deja a Railway solo la tarea ligera de responder. Los vectores se escriben directamente en
+Supabase (`kb_chunks`), que es lo que Railway lee — no hay que "subir" nada más.
+
+```bash
+cp .env.example .env          # rellena SUPABASE_URL y SUPABASE_SERVICE_ROLE_KEY
+python3 -m venv .venv && source .venv/bin/activate
+pip install -r requirements.txt
+python3 index_local.py --all   # completo (la 1ª vez); luego, sin --all = solo lo nuevo
+```
+
+Cada vez que amplíes contenido, vuelve a ejecutar `python3 index_local.py` (incremental).
+
+> Si indexas en local, **desactiva el reindexado automático de Railway** poniendo
+> `REINDEX_CRON=` (vacío) en sus variables, y no uses los botones de reindexar del panel
+> (para no arriesgar el OOM en el servidor).
+
 ## Base de datos
 
-Las tablas (`kb_chunks`, `rag_index_state`, `rag_queries`, `rag_settings`) y la función
-`match_kb` se crean con la migración `20260704_feat_rag_curro` en el proyecto Supabase de re-Expo92.
+Las tablas (`kb_chunks`, `rag_index_state`, `rag_queries`, `rag_settings`, `rag_ratelimit`)
+y la función `match_kb` se crean con las migraciones `feat_rag_curro_chatbot` y
+`feat_rag_conversaciones_y_ratelimit` en el proyecto Supabase de re-Expo92.

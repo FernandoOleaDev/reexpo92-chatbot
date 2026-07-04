@@ -34,11 +34,13 @@ status: dict = {
 
 
 def _plog(msg: str) -> None:
-    """Añade una línea al log de progreso (se muestra en vivo en el panel)."""
+    """Añade una línea al log de progreso (panel en vivo) y la imprime (consola/logs)."""
     p = status["progress"]
     ts = dt.datetime.now(dt.timezone.utc).strftime("%H:%M:%S")
-    p["log"].append(f"[{ts}] {msg}")
+    line = f"[{ts}] {msg}"
+    p["log"].append(line)
     p["log"] = p["log"][-60:]  # solo las últimas líneas
+    print(line, flush=True)  # visible en la consola (indexado local) y en los logs de Railway
 
 
 def _set_progress(current: int, total: int, chunks: int) -> None:
