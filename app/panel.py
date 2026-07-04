@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import html
+import re
 
 from . import config, monitor, ratelimit, settings
 
@@ -51,6 +52,11 @@ nav.menu a.active{background:var(--orange);color:#fff}
 .bub.u{background:#2f44a0;color:#fff;margin-left:auto;border-bottom-right-radius:2px}
 .bub.c{background:#fff;border:1px solid var(--line);border-bottom-left-radius:2px}
 .bub .m{display:block;font-size:10px;color:#8a7f6a;margin-top:3px;text-transform:uppercase}
+.bub.c p{margin:0 0 5px}.bub.c p:last-child{margin-bottom:0}
+.bub.c ul,.bub.c ol{margin:4px 0;padding-left:18px}.bub.c ul{list-style:disc}.bub.c ol{list-style:decimal}
+.bub.c li{margin:1px 0}.bub.c strong{font-weight:800}.bub.c em{font-style:italic}
+.bub.c code{background:#efe4cd;border:1px solid #c9b48f;border-radius:3px;padding:0 3px;font-size:.9em}
+.bub.c a{color:#2f44a0;font-weight:700}
 .rl{display:grid;grid-template-columns:repeat(3,1fr);gap:10px}
 .rl .c{background:#fffdf7;border:1px solid var(--line);padding:10px}
 .rl .c b{display:block;font-size:20px;font-family:ui-monospace,monospace}
@@ -61,6 +67,58 @@ nav.menu a.active{background:var(--orange);color:#fff}
 
 def _esc(x) -> str:
     return html.escape(str(x if x is not None else ""))
+
+
+# Renderiza el markdown+colores de Curro (igual que curroMarkdown.ts) para el panel.
+_MD_COLORS = {
+    "azul": "color:#1B2A6B;font-weight:700", "naranja": "color:#FF6B35;font-weight:700",
+    "rojo": "color:#E8412B;font-weight:700", "turquesa": "color:#00A8A8;font-weight:700",
+    "verde": "color:#2e7d4f;font-weight:700",
+    "amarillo": "background:#FFC72C;color:#1a1714;padding:0 3px;border-radius:2px;font-weight:600",
+}
+
+
+def _md_inline(s: str) -> str:
+    s = _esc(s)
+    s = re.sub(r"\*\*([^*]+?)\*\*", r"<strong>\1</strong>", s)
+    s = re.sub(r"__([^_]+?)__", r"<strong>\1</strong>", s)
+    s = re.sub(r"\*([^*\n]+?)\*", r"<em>\1</em>", s)
+    s = re.sub(r"`([^`]+?)`", r"<code>\1</code>", s)
+    s = re.sub(r"\[([^\]]+)\]\((https?://[^)\s]+)\)",
+               r'<a href="\2" target="_blank" rel="noopener">\1</a>', s)
+    s = re.sub(r"\[(azul|naranja|amarillo|rojo|turquesa|verde)\]([\s\S]+?)\[/\1\]",
+               lambda m: f'<span style="{_MD_COLORS[m.group(1)]}">{m.group(2)}</span>', s)
+    return s
+
+
+def _md(text: str) -> str:
+    out, lst = [], None
+    for raw in (text or "").split("\n"):
+        line = raw.rstrip()
+        ol = re.match(r"^\s*\d+[.)]\s+(.*)$", line)
+        ul = re.match(r"^\s*[-*•]\s+(.*)$", line)
+        if ol:
+            if lst != "ol":
+                if lst:
+                    out.append(f"</{lst}>")
+                out.append("<ol>"); lst = "ol"
+            out.append(f"<li>{_md_inline(ol.group(1))}</li>")
+        elif ul:
+            if lst != "ul":
+                if lst:
+                    out.append(f"</{lst}>")
+                out.append("<ul>"); lst = "ul"
+            out.append(f"<li>{_md_inline(ul.group(1))}</li>")
+        elif not line.strip():
+            if lst:
+                out.append(f"</{lst}>"); lst = None
+        else:
+            if lst:
+                out.append(f"</{lst}>"); lst = None
+            out.append(f"<p>{_md_inline(line)}</p>")
+    if lst:
+        out.append(f"</{lst}>")
+    return "".join(out)
 
 
 def _shell(active: str, body: str, extra_head: str = "") -> str:
@@ -112,20 +170,35 @@ def render_conversations() -> str:
     if not sesiones:
         body = '<div class=win><div class=tb>Conversaciones</div><div class=bd><p class=muted>Aún no hay preguntas registradas.</p></div></div>'
         return _shell("conversaciones", body)
+    # Estadísticas (sobre las sesiones recientes cargadas)
+    n_ses = len(sesiones)
+    n_msgs = sum(len(s["items"]) for s in sesiones)
+    n_pre = sum(1 for s in sesiones for it in s["items"] if it.get("mode") != "social")
+    media = round(n_msgs / n_ses, 1) if n_ses else 0
+    stats = f"""<div class=win><div class=tb>Resumen de conversaciones</div><div class=bd>
+<div class=grid>
+  <div class=stat><b>{n_ses}</b><span>Sesiones (anónimas)</span></div>
+  <div class=stat><b>{n_msgs}</b><span>Mensajes</span></div>
+  <div class=stat><b>{n_pre}</b><span>Preguntas reales</span></div>
+  <div class=stat><b>{media}</b><span>Media msgs/sesión</span></div>
+</div>
+<p class=muted>Cada "sesión" es un visitante anónimo (una pestaña/navegador); no hay cuentas, así que es la mejor aproximación a "usuarios distintos".</p>
+</div></div>"""
+
     blocks = []
     for s in sesiones:
         items = s["items"]
         rows = []
         for it in items:
             q = _esc(it.get("question"))
-            a = _esc(it.get("answer") or "(sin respuesta registrada)")
+            a = _md(it.get("answer") or "(sin respuesta registrada)")
             meta = f"{_esc(it.get('mode'))}" + (f" · {_esc(it.get('model'))}" if it.get("model") else "") \
                 + f" · {_esc((it.get('created_at') or '')[11:19])}"
             rows.append(f'<div class="bub u">{q}</div>'
                         f'<div class="bub c">{a}<span class=m>{meta}</span></div>')
         blocks.append(f'<div class=conv><div class=h>Sesión {_esc(s["session_id"])} · {len(items)} mensaje(s)</div>'
                       f'{"".join(rows)}</div>')
-    body = (f'<div class=win><div class=tb>Conversaciones · últimas {len(sesiones)} sesiones</div>'
+    body = (stats + f'<div class=win><div class=tb>Conversaciones · últimas {len(sesiones)} sesiones</div>'
             f'<div class=bd>{"".join(blocks)}</div></div>')
     return _shell("conversaciones", body)
 
