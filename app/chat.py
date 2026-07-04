@@ -329,8 +329,17 @@ _ABOUT = re.compile(
     r"que es (esto|esta|este|re-?expo|reexpo|la web|la pagina|el proyecto|el sitio|la plataforma)|"
     r"explicame (el proyecto|esto|reexpo|re-?expo|la web)|que proyecto es|de que trata (esto|la web|la pagina))",
     re.I)
-_ABOUT_QUERY = ("Qué es re-Expo92: el proyecto de recreación 3D colaborativa de la Expo 92 de Sevilla. "
-                "De qué trata esta web y qué se puede hacer en ella.")
+_ABOUT_REPLY = (
+    "**re-Expo92** es un proyecto [azul]colaborativo[/azul] para [naranja]recrear en 3D la Exposición "
+    "Universal de Sevilla de 1992[/naranja] 🌈. Entre toda la comunidad documentamos y modelamos los "
+    "pabellones y elementos del recinto —sus fotos, planos, datos y modelos— para que la Expo 92 no se "
+    "pierda y algún día se pueda volver a pasear por ella.\n\n"
+    "Aquí puedes:\n"
+    "- Explorar el **catálogo** de pabellones y el **mapa** del recinto.\n"
+    "- Ver el **archivo de fotos** y los **vídeos** de época.\n"
+    "- Y si te animas, **colaborar** con fotos, investigación, modelado 3D o el mapa.\n\n"
+    "Es un proyecto sin ánimo de lucro. Pregúntame por cualquier pabellón, el mapa, las fotos o cómo participar."
+)
 
 
 def answer(question: str, session_id: str | None) -> dict:
@@ -363,14 +372,19 @@ def answer(question: str, session_id: str | None) -> dict:
               "latency_ms": int((time.time() - t0) * 1000)})
         return {"answer": resp, "sources": srcs, "images": [], "navigate": route, "mode": "nav"}
 
-    # 3) recuperar contexto. Si es una pregunta "meta" (¿de qué va esto?), se busca el
-    #    artículo del PROYECTO y NO se ponen enlaces ni fotos (no aportan ahí).
-    is_about = bool(_ABOUT.search(_norm(q)))
-    rq = _ABOUT_QUERY if is_about else q
-    chunks = _retrieve(rq, k=10)
-    strong = _select_strong(chunks, rq)
-    srcs = [] if is_about else _sources_from(strong)
-    imgs = [] if is_about else _images_from(strong)
+    # 3) pregunta "meta" (¿de qué va esto?, ¿qué es re-Expo92?) → explicación CANÓNICA del
+    #    proyecto (fija y correcta siempre), sin LLM ni enlaces/fotos que no aportan.
+    if _ABOUT.search(_norm(q)):
+        _log({"session_id": session_id, "question": q, "answer": _ABOUT_REPLY, "mode": "about",
+              "answered": True, "matched_count": 0, "used_llm": False,
+              "latency_ms": int((time.time() - t0) * 1000)})
+        return {"answer": _ABOUT_REPLY, "sources": [], "images": [], "navigate": None, "mode": "about"}
+
+    # 4) recuperar contexto
+    chunks = _retrieve(q, k=10)
+    strong = _select_strong(chunks, q)
+    srcs = _sources_from(strong)
+    imgs = _images_from(strong)
     top_sim = chunks[0].get("similarity") if chunks else None
     top_src = chunks[0].get("source_type") if chunks else None
 
