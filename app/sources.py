@@ -48,12 +48,11 @@ def fetch_re_memories(since: str | None) -> list[dict]:
     params = {
         "select": "id,name,description,attributes,updated_at",
         "order": "updated_at.asc",
-        "limit": "2000",
     }
     if since:
         params["updated_at"] = f"gt.{since}"
     docs = []
-    for r in db.select("re_memories", params):
+    for r in db.select_all("re_memories", params):
         name = (r.get("name") or "").strip()
         desc = (r.get("description") or "").strip()
         attrs = _flatten_attributes(r.get("attributes"))
@@ -77,12 +76,11 @@ def fetch_photos(since: str | None) -> list[dict]:
         "select": "id,title,description,tags,updated_at",
         "status": "eq.aprobada",
         "order": "updated_at.asc",
-        "limit": "5000",
     }
     if since:
         params["updated_at"] = f"gt.{since}"
     docs = []
-    for r in db.select("community_photos", params):
+    for r in db.select_all("community_photos", params):
         title = (r.get("title") or "").strip()
         desc = (r.get("description") or "").strip()
         tags = r.get("tags") or []

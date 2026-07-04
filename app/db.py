@@ -37,6 +37,23 @@ def select(table: str, params: dict[str, Any]) -> list[dict]:
     return r.json()
 
 
+def select_all(table: str, params: dict[str, Any], page: int = 1000) -> list[dict]:
+    """Como select() pero PAGINA con Range (PostgREST corta los SELECT en ~1000 filas).
+    Ignora cualquier 'limit' en params (usa Range). Mantén un 'order' estable."""
+    params = {k: v for k, v in params.items() if k != "limit"}
+    out: list[dict] = []
+    start = 0
+    while True:
+        h = _headers({"Range-Unit": "items", "Range": f"{start}-{start + page - 1}"})
+        r = requests.get(_rest(table), headers=h, params=params, timeout=_TIMEOUT)
+        r.raise_for_status()
+        batch = r.json()
+        out.extend(batch)
+        if len(batch) < page:
+            return out
+        start += page
+
+
 def upsert(table: str, rows: list[dict], on_conflict: str | None = None) -> None:
     if not rows:
         return

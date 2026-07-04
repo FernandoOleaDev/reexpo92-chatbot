@@ -173,17 +173,16 @@ def run_index(full: bool = False, only: list[str] | None = None) -> dict:
                     max_seen[st] = ua
 
         prog["phase"] = "guardando estado"
-        # actualizar estado por fuente
+        # actualizar estado por fuente (upsert POR FILA: PostgREST exige las mismas
+        # claves en un upsert en lote, y aquí unas filas llevan 'watermark' y otras no)
         now = dt.datetime.now(dt.timezone.utc).isoformat()
-        state_rows = []
         for st in list(sources.INCREMENTAL_TYPES) + list(sources.FULL_TYPES):
             total = db.count("kb_chunks", {"source_type": f"eq.{st}"})
             row = {"source_type": st, "last_indexed_at": now, "chunk_count": total}
             wm = max_seen.get(st) or (None if full else watermarks.get(st))
             if wm:
                 row["watermark"] = wm
-            state_rows.append(row)
-        db.upsert("rag_index_state", state_rows, on_conflict="source_type")
+            db.upsert("rag_index_state", [row], on_conflict="source_type")
 
         status["last_report"] = report
         status["last_run"] = now
