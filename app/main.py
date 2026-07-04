@@ -132,7 +132,7 @@ async def post_settings(request: Request, _: str = Depends(auth.require_admin)):
         "groq_model": body.get("groq_model") or None,
         "llm_enabled": "llm_enabled" in body,
         "temperature": float(body.get("temperature") or 0.3),
-        "sources": {k: (f"src_{k}" in body) for k in ("re_memory", "photo", "knowledge", "ayuda")},
+        "sources": {k: (f"src_{k}" in body) for k in ("re_memory", "photo", "knowledge", "ayuda", "video")},
     })
     return HTMLResponse(panel.render("Configuración guardada."))
 

@@ -26,7 +26,7 @@ _DEFAULTS = {
     "groq_model": config.GROQ_MODEL,
     "llm_enabled": True,
     "temperature": 0.3,
-    "sources": {"re_memory": True, "photo": True, "knowledge": True, "ayuda": True},
+    "sources": {"re_memory": True, "photo": True, "knowledge": True, "ayuda": True, "video": True},
 }
 
 

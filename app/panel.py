@@ -142,7 +142,7 @@ def render(msg: str = "") -> str:
     src_boxes = "".join(
         f'<label style="display:inline-block;margin-right:16px;text-transform:none">'
         f'<input type="checkbox" name="src_{k}" {"checked" if src.get(k, True) else ""}> {k}</label>'
-        for k in ("re_memory", "photo", "knowledge", "ayuda")
+        for k in ("re_memory", "photo", "knowledge", "ayuda", "video")
     )
 
     top_rows = "".join(f"<tr><td>{_esc(q)}</td><td>{n}</td></tr>" for q, n in ov["top_questions"]) \

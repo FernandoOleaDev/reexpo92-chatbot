@@ -42,8 +42,13 @@ def main() -> None:
     from app import indexer  # importar DESPUÉS de cargar el entorno (config lo lee al importar)
 
     full = "--all" in sys.argv or "--todo" in sys.argv
-    print(f"→ Indexando ({'COMPLETO' if full else 'incremental'}). La 1ª vez descarga el modelo (~400 MB), paciencia.\n")
-    report = indexer.run_index(full=full)
+    only = None
+    for a in sys.argv:
+        if a.startswith("--only="):
+            only = [s.strip() for s in a.split("=", 1)[1].split(",") if s.strip()]
+    scope = f"solo {', '.join(only)}" if only else ("COMPLETO" if full else "incremental")
+    print(f"→ Indexando ({scope}). La 1ª vez descarga el modelo (~400 MB), paciencia.\n")
+    report = indexer.run_index(full=full, only=only)
     print("\n✓ Indexado terminado.")
     print("  Documentos por fuente:", report.get("processed"))
     print("  Chunks nuevos/actualizados:", report.get("chunks"))
