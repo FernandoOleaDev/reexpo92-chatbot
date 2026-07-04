@@ -325,20 +325,23 @@ def _nav_intent(q: str):
 # no describir las fotos/vídeos que toque recuperar. Se fuerza la búsqueda al artículo
 # "Qué es re-Expo92" usando una consulta canónica.
 _ABOUT = re.compile(
-    r"(de que (va|trata)|para que (sirve|es) (esto|esta|este|la web|la pagina)|"
-    r"que es (esto|esta|este|re-?expo|reexpo|la web|la pagina|el proyecto|el sitio|la plataforma)|"
-    r"explicame (el proyecto|esto|reexpo|re-?expo|la web)|que proyecto es|de que trata (esto|la web|la pagina))",
+    r"(de que (va|trata|trata esto|trata todo)|para que (sirve|es) (esto|esta|este|la web|la pagina|el sitio)|"
+    r"que es (esto|esta|este|re-?expo|reexpo|la web|la pagina|el proyecto|el sitio|la plataforma|todo esto)|"
+    r"esto que es|que es todo esto|no se (muy bien )?que es|de que trata (el proyecto|la web|la pagina|esto)|"
+    r"explicame (el proyecto|esto|reexpo|re-?expo|la web|la pagina)|cuentame (sobre|de|algo de) (re-?expo|reexpo|el proyecto|la web|esto)|"
+    r"que proyecto es|que hac(eis|en|e) (aqui|en esta web|en re-?expo)|de que va (esto|la web|la pagina|el proyecto)|"
+    r"en que consiste|de que trata|que se (puede )?hace(r)? (aqui|en esta web))",
     re.I)
 _ABOUT_REPLY = (
-    "**re-Expo92** es un proyecto [azul]colaborativo[/azul] para [naranja]recrear en 3D la Exposición "
-    "Universal de Sevilla de 1992[/naranja] 🌈. Entre toda la comunidad documentamos y modelamos los "
-    "pabellones y elementos del recinto —sus fotos, planos, datos y modelos— para que la Expo 92 no se "
-    "pierda y algún día se pueda volver a pasear por ella.\n\n"
-    "Aquí puedes:\n"
-    "- Explorar el **catálogo** de pabellones y el **mapa** del recinto.\n"
-    "- Ver el **archivo de fotos** y los **vídeos** de época.\n"
-    "- Y si te animas, **colaborar** con fotos, investigación, modelado 3D o el mapa.\n\n"
-    "Es un proyecto sin ánimo de lucro. Pregúntame por cualquier pabellón, el mapa, las fotos o cómo participar."
+    "**re-Expo92** es un proyecto [azul]colaborativo[/azul] sobre la Expo 92 de Sevilla con una gran misión 🌈:\n\n"
+    "- [naranja]Recrear la Expo en 3D[/naranja] para revivirla en **móvil, PC y realidad virtual** — volver a "
+    "pasear por el recinto.\n"
+    "- Ser el [naranja]gran archivo de TODO lo de la Expo[/naranja]: fotos, documentos, vídeos, audios y datos.\n"
+    "- Un **museo 3D** con objetos de la Expo [amarillo]escaneados[/amarillo] (folletos, entradas, recuerdos, "
+    "merchandising…).\n\n"
+    "Entre toda la comunidad lo documentamos y modelamos para que la Expo 92 no se pierda. Es sin ánimo de lucro.\n\n"
+    "Puedes explorar el catálogo y el mapa, ver el archivo de fotos y vídeos, o **colaborar** (fotos, "
+    "investigación, modelado 3D, escaneo de objetos, mapa). Pregúntame lo que quieras."
 )
 
 
@@ -373,16 +376,23 @@ def answer(question: str, session_id: str | None) -> dict:
         return {"answer": resp, "sources": srcs, "images": [], "navigate": route, "mode": "nav"}
 
     # 3) pregunta "meta" (¿de qué va esto?, ¿qué es re-Expo92?) → explicación CANÓNICA del
-    #    proyecto (fija y correcta siempre), sin LLM ni enlaces/fotos que no aportan.
-    if _ABOUT.search(_norm(q)):
+    #    proyecto. Fija y correcta siempre; no depende de la frase exacta ni del LLM.
+    def _about():
         _log({"session_id": session_id, "question": q, "answer": _ABOUT_REPLY, "mode": "about",
               "answered": True, "matched_count": 0, "used_llm": False,
               "latency_ms": int((time.time() - t0) * 1000)})
         return {"answer": _ABOUT_REPLY, "sources": [], "images": [], "navigate": None, "mode": "about"}
 
+    if _ABOUT.search(_norm(q)):        # (a) por patrón de frase
+        return _about()
+
     # 4) recuperar contexto
     chunks = _retrieve(q, k=10)
     strong = _select_strong(chunks, q)
+    # (b) respaldo semántico: cualquier forma de preguntar "de qué va" hace que el mejor
+    #     resultado sea el artículo del proyecto → misma respuesta canónica.
+    if strong and strong[0].get("source_type") == "knowledge" and strong[0].get("source_id") == "que-es-reexpo92":
+        return _about()
     srcs = _sources_from(strong)
     imgs = _images_from(strong)
     top_sim = chunks[0].get("similarity") if chunks else None
