@@ -7,10 +7,11 @@ from . import config, indexer, monitor, scheduler, settings
 
 # modelos de Groq recomendados por defecto (el dropdown se completa en vivo si hay clave)
 FALLBACK_MODELS = [
-    "llama-3.1-8b-instant",
-    "llama-3.3-70b-versatile",
     "openai/gpt-oss-20b",
     "openai/gpt-oss-120b",
+    "qwen/qwen3.6-27b",
+    "qwen/qwen3-32b",
+    "llama-3.3-70b-versatile",
     "gemma2-9b-it",
 ]
 

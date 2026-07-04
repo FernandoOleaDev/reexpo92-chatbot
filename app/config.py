@@ -18,7 +18,7 @@ SUPABASE_SERVICE_ROLE_KEY = _clean(os.getenv("SUPABASE_SERVICE_ROLE_KEY"))
 
 # ── Groq (capa de generación; si falta, el chat cae a modo "solo búsqueda") ─────
 GROQ_API_KEY = _clean(os.getenv("GROQ_API_KEY"))
-GROQ_MODEL = _clean(os.getenv("GROQ_MODEL")) or "llama-3.1-8b-instant"
+GROQ_MODEL = _clean(os.getenv("GROQ_MODEL")) or "openai/gpt-oss-20b"
 GROQ_BASE_URL = _clean(os.getenv("GROQ_BASE_URL")) or "https://api.groq.com/openai/v1"
 
 # ── Secreto para /embed (uso interno / futuro WebGL-Unity) ──────────────────────
