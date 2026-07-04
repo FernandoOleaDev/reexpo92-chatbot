@@ -53,8 +53,24 @@ SOCIAL = [
     (re.compile(r"\b(adios|adiós|hasta luego|chao|bye)\b", re.I), "¡Hasta pronto! Aquí estaré si necesitas algo de la Expo 92."),
     (re.compile(r"(quién eres|quien eres|qué eres|que eres|cómo te llamas)", re.I),
      "Soy Curro, la mascota de la Expo 92 de Sevilla. Ahora ayudo en re-Expo92: te busco pabellones, fotos, zonas y te explico cómo usar la web."),
-    (re.compile(r"(te quiero|eres tonto|idiota)", re.I), "Jeje, yo solo soy un pájaro de colores 🐦 ¿Te ayudo con algo de la Expo?"),
+    (re.compile(r"\bte quiero\b", re.I), "¡Qué majo! 🐦 Yo también te tengo cariño. ¿Te ayudo con algo de la Expo 92?"),
 ]
+
+# Guardián de entrada: insultos, palabrotas y contenido +18 → Curro corta con amabilidad
+# y NO da enlaces ni imágenes. (Coincidencia sobre el texto en minúsculas, con tildes.)
+_ABUSE = re.compile(
+    r"\b(gilipoll\w*|cabr[oó]n\w*|put[oa]s?|mierda\w*|joder|j[oó]dete|coño|coñazo|polla\w*|"
+    r"capull\w*|imb[eé]cil\w*|subnormal\w*|mongol[oa]s?|mongolic\w*|retrasad[oa]s?|maric[oó]n\w*|"
+    r"marica|zorra\w*|pendej\w*|mam[oó]n\w*|cojones|hostia\w*|malparid\w*|hijo\s*de\s*puta|hijoputa|"
+    r"hdp|est[uú]pid[oa]s?|tont[oa]\s*del\s*culo|payaso\s*de\s*mierda|"
+    r"porno\w*|follar|follam\w*|follo|masturb\w*|orgasm\w*|semen|chocho\w*|mamada\w*|"
+    r"desnud[oa]s?|nudes|xxx|pornhub|onlyfans|tetas|pez[oó]n|vagina\w*|cunni\w*|felaci\w*)\b",
+    re.IGNORECASE,
+)
+_ABUSE_REPLY = (
+    "Uy, así no 🙈 Soy Curro y estoy aquí para ayudarte con la Expo 92 con buen rollo. "
+    "Pregúntame por los pabellones, el mapa, las fotos o cómo usar la web y te echo una mano encantado."
+)
 
 SYSTEM_PROMPT = (
     "Eres Curro, la simpática mascota de la Expo 92 de Sevilla, y ayudante de la web re-Expo92 "
@@ -291,6 +307,13 @@ def _nav_intent(q: str):
 def answer(question: str, session_id: str | None) -> dict:
     t0 = time.time()
     q = (question or "").strip()
+
+    # 0) moderación de entrada: insultos / palabrotas / +18 → corte amable, SIN enlaces
+    if _ABUSE.search(q):
+        _log({"session_id": session_id, "question": q, "answer": _ABUSE_REPLY, "mode": "blocked",
+              "answered": True, "matched_count": 0, "used_llm": False,
+              "latency_ms": int((time.time() - t0) * 1000)})
+        return {"answer": _ABUSE_REPLY, "sources": [], "images": [], "navigate": None, "mode": "blocked"}
 
     # 1) frases sociales
     for pat, resp in SOCIAL:
