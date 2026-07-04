@@ -104,15 +104,25 @@ async def _read_form(request: Request) -> dict:
 async def post_reindex(request: Request, _: str = Depends(auth.require_admin)):
     body = await _read_form(request)
     full = body.get("mode") == "all"
-    try:
-        report = indexer.run_index(full=full)
-        if "skipped" in report:
-            msg = "Ya había un indexado en curso."
-        else:
-            msg = f"Indexado {'completo' if full else 'incremental'}: +{report.get('chunks', 0)} chunks."
-    except Exception as e:  # noqa: BLE001
-        msg = f"Error al indexar: {e}"
+    started = indexer.start_async(full=full)
+    msg = (f"Indexado {'completo' if full else 'incremental'} en marcha…"
+           if started else "Ya había un indexado en curso.")
     return HTMLResponse(panel.render(msg))
+
+
+@app.get("/panel/progress")
+def get_progress(_: str = Depends(auth.require_admin)):
+    """Estado del indexado en curso (para la barra de progreso en vivo)."""
+    return JSONResponse({
+        "running": indexer.status["running"],
+        "progress": indexer.status["progress"],
+        "last_error": indexer.status.get("last_error"),
+    })
+
+
+@app.get("/panel/conversaciones", response_class=HTMLResponse)
+def get_conversaciones(_: str = Depends(auth.require_admin)):
+    return HTMLResponse(panel.render_conversations())
 
 
 @app.post("/panel/settings", response_class=HTMLResponse)

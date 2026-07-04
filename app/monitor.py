@@ -12,6 +12,32 @@ def _since_iso(days: int) -> str:
     return (dt.datetime.now(dt.timezone.utc) - dt.timedelta(days=days)).isoformat()
 
 
+def conversations(limit: int = 300) -> list[dict]:
+    """Últimas preguntas agrupadas por sesión (para la vista de conversaciones)."""
+    try:
+        rows = db.select("rag_queries", {
+            "select": "session_id,question,answer,mode,model,used_llm,matched_count,created_at",
+            "order": "created_at.desc", "limit": str(limit),
+        })
+    except Exception:
+        return []
+
+    sessions: dict[str, dict] = {}
+    order: list[str] = []
+    for r in rows:  # vienen desc; los agrupamos y luego ordenamos cada sesión asc
+        sid = r.get("session_id") or "anón"
+        if sid not in sessions:
+            sessions[sid] = {"session_id": sid, "items": [], "last": r.get("created_at")}
+            order.append(sid)
+        sessions[sid]["items"].append(r)
+    out = []
+    for sid in order:
+        s = sessions[sid]
+        s["items"].sort(key=lambda x: x.get("created_at") or "")
+        out.append(s)
+    return out
+
+
 def _today_iso() -> str:
     now = dt.datetime.now(dt.timezone.utc)
     return now.replace(hour=0, minute=0, second=0, microsecond=0).isoformat()

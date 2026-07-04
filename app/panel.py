@@ -3,7 +3,7 @@ from __future__ import annotations
 
 import html
 
-from . import config, indexer, monitor, scheduler, settings
+from . import config, indexer, monitor, ratelimit, scheduler, settings
 
 # modelos de Groq recomendados por defecto (el dropdown se completa en vivo si hay clave)
 FALLBACK_MODELS = [
@@ -38,11 +38,91 @@ select,input[type=number]{padding:7px;border:1px solid var(--line);background:#f
 .ok{color:var(--green);font-weight:800}.err{color:var(--red);font-weight:800}
 .gap{color:var(--red)}
 form{margin:0}.muted{color:#6a614e;font-size:12px}
+nav.menu{display:flex;gap:6px;margin:-8px -18px 16px;padding:0 18px 10px;border-bottom:2px solid var(--line)}
+nav.menu a{background:#fffdf7;border:1px solid var(--line);border-bottom:0;padding:7px 14px;font-weight:800;font-size:12px;text-transform:uppercase;text-decoration:none;color:var(--blue)}
+nav.menu a.active{background:var(--orange);color:#fff}
+.bar{height:22px;background:#e9e0cd;border:1px solid var(--line);position:relative;overflow:hidden}
+.bar>i{display:block;height:100%;background:linear-gradient(90deg,#F7A81B,var(--orange));width:0;transition:width .4s}
+.bar>span{position:absolute;inset:0;display:flex;align-items:center;justify-content:center;font-size:12px;font-weight:800;color:#1a1714}
+.logbox{background:#1a1714;color:#e9e0cd;font-family:ui-monospace,monospace;font-size:12px;padding:10px;height:180px;overflow:auto;white-space:pre-wrap;margin-top:8px}
+.conv{border:1px solid var(--line);background:#fffdf7;margin:0 0 12px}
+.conv .h{background:#efe4cd;padding:6px 10px;font-size:11px;color:#6a614e;font-family:ui-monospace,monospace}
+.bub{max-width:80%;padding:7px 11px;border-radius:10px;margin:8px 10px;font-size:13.5px;line-height:1.4}
+.bub.u{background:#2f44a0;color:#fff;margin-left:auto;border-bottom-right-radius:2px}
+.bub.c{background:#fff;border:1px solid var(--line);border-bottom-left-radius:2px}
+.bub .m{display:block;font-size:10px;color:#8a7f6a;margin-top:3px;text-transform:uppercase}
+.rl{display:grid;grid-template-columns:repeat(3,1fr);gap:10px}
+.rl .c{background:#fffdf7;border:1px solid var(--line);padding:10px}
+.rl .c b{display:block;font-size:20px;font-family:ui-monospace,monospace}
+.rl .c.ok b{color:var(--green)}.rl .c.warn b{color:#E8852A}.rl .c.crit b{color:var(--red)}
+.rl .c span{font-size:11px;text-transform:uppercase;color:#5a5142}
 """
 
 
 def _esc(x) -> str:
     return html.escape(str(x if x is not None else ""))
+
+
+def _shell(active: str, body: str, extra_head: str = "") -> str:
+    nav = "".join(
+        f'<a href="{href}"{" class=active" if key == active else ""}>{label}</a>'
+        for key, href, label in (
+            ("resumen", "/panel", "Resumen"),
+            ("conversaciones", "/panel/conversaciones", "Conversaciones"),
+        )
+    )
+    return f"""<!doctype html><html lang=es><head><meta charset=utf-8>
+<meta name=viewport content="width=device-width,initial-scale=1"><title>Panel RAG · re-Expo92</title>
+<style>{_CSS}</style>{extra_head}</head><body><div class=wrap>
+<h1>Panel RAG · Curro · re-Expo92</h1>
+<nav class=menu>{nav}</nav>
+{body}
+<p class=muted>reexpo92-chatbot · servicio RAG. Este panel usa la service_role de Supabase; mantenlo tras login.</p>
+</div></body></html>"""
+
+
+def _ratelimit_card() -> str:
+    d = ratelimit.latest()
+    if not d:
+        return ('<div class=win><div class=tb>Rate limit de Groq</div><div class=bd>'
+                '<p class=muted>Sin datos aún: se rellena tras la primera respuesta con LLM.</p></div></div>')
+    lvl = ratelimit.status_level()
+    lim_r, rem_r = d.get("limit_requests"), d.get("remaining_requests")
+    used = f"{(lim_r - rem_r)}/{lim_r}" if (lim_r and rem_r is not None) else "—"
+    warn = ("<p class=err>⚠ Te acercas al límite diario de peticiones.</p>" if lvl == "crit"
+            else ("<p style='color:#E8852A;font-weight:800'>Atención: consumo alto.</p>" if lvl == "warn" else ""))
+    return f"""<div class=win><div class=tb>Rate limit de Groq</div><div class=bd>
+<div class=rl>
+  <div class="c {lvl}"><b>{_esc(rem_r)}</b><span>Peticiones restantes</span></div>
+  <div class=c><b>{_esc(lim_r)}</b><span>Límite de peticiones</span></div>
+  <div class=c><b>{_esc(d.get('reset_requests') or '—')}</b><span>Reinicio</span></div>
+</div>
+<p class=muted>Consumidas: {used} · tokens restantes: {_esc(d.get('remaining_tokens'))}/{_esc(d.get('limit_tokens'))} · actualizado: {_esc(d.get('at'))}</p>
+{warn}
+</div></div>"""
+
+
+def render_conversations() -> str:
+    sesiones = monitor.conversations(300)
+    if not sesiones:
+        body = '<div class=win><div class=tb>Conversaciones</div><div class=bd><p class=muted>Aún no hay preguntas registradas.</p></div></div>'
+        return _shell("conversaciones", body)
+    blocks = []
+    for s in sesiones:
+        items = s["items"]
+        rows = []
+        for it in items:
+            q = _esc(it.get("question"))
+            a = _esc(it.get("answer") or "(sin respuesta registrada)")
+            meta = f"{_esc(it.get('mode'))}" + (f" · {_esc(it.get('model'))}" if it.get("model") else "") \
+                + f" · {_esc((it.get('created_at') or '')[11:19])}"
+            rows.append(f'<div class="bub u">{q}</div>'
+                        f'<div class="bub c">{a}<span class=m>{meta}</span></div>')
+        blocks.append(f'<div class=conv><div class=h>Sesión {_esc(s["session_id"])} · {len(items)} mensaje(s)</div>'
+                      f'{"".join(rows)}</div>')
+    body = (f'<div class=win><div class=tb>Conversaciones · últimas {len(sesiones)} sesiones</div>'
+            f'<div class=bd>{"".join(blocks)}</div></div>')
+    return _shell("conversaciones", body)
 
 
 def render(msg: str = "") -> str:
@@ -70,18 +150,13 @@ def render(msg: str = "") -> str:
     gap_rows = "".join(f"<tr><td class=gap>{_esc(q)}</td><td>{n}</td></tr>" for q, n in ov["content_gaps"]) \
         or "<tr><td colspan=2 class=muted>Nada sin responder 🎉</td></tr>"
 
-    run_state = ('<span class="err">indexando…</span>' if st["running"]
-                 else (f'<span class="ok">OK</span> · {_esc(st["last_run"])}' if st["last_run"]
-                       else "nunca"))
     err = f'<p class="err">⚠ Último error: {_esc(st["last_error"])}</p>' if st.get("last_error") else ""
     banner = f'<div class="win"><div class="bd ok">{_esc(msg)}</div></div>' if msg else ""
+    p = st["progress"]
+    plog = _esc("\n".join(p.get("log") or []))
+    running = "true" if st["running"] else "false"
 
-    return f"""<!doctype html><html lang=es><head><meta charset=utf-8>
-<meta name=viewport content="width=device-width,initial-scale=1"><title>Panel RAG · re-Expo92</title>
-<style>{_CSS}</style></head><body><div class=wrap>
-<h1>Panel RAG · Curro · re-Expo92</h1>
-{banner}
-
+    body = f"""{banner}
 <div class=win><div class=tb>Monitorización · últimos {ov['days']} días</div><div class=bd>
 <div class=grid>
   <div class=stat><b>{ov['total']}</b><span>Preguntas</span></div>
@@ -89,18 +164,25 @@ def render(msg: str = "") -> str:
   <div class=stat><b>{ov['llm_pct']}%</b><span>Con LLM</span></div>
   <div class=stat><b>{ov['groq_today']}</b><span>Groq hoy</span></div>
 </div>
-<p class=muted>Latencia media: {ov['avg_latency_ms']} ms</p>
+<p class=muted>Latencia media: {ov['avg_latency_ms']} ms · <a href="/panel/conversaciones">ver todas las conversaciones →</a></p>
 <div class=row style="align-items:flex-start">
   <div style="flex:1;min-width:280px"><h3>Top preguntas</h3><table><tr><th>Pregunta</th><th>Nº</th></tr>{top_rows}</table></div>
   <div style="flex:1;min-width:280px"><h3>Huecos de contenido (0 fuentes)</h3><table><tr><th>Pregunta</th><th>Nº</th></tr>{gap_rows}</table></div>
 </div>
 </div></div>
 
+{_ratelimit_card()}
+
 <div class=win><div class=tb>Índice</div><div class=bd>
-<p>Última indexación: {run_state} · modo: {_esc(st.get('last_mode'))} · cron: {_esc(scheduler.scheduled_at() or 'desactivado')}</p>
+<p>Modo del último: {_esc(st.get('last_mode') or '—')} · cron: {_esc(scheduler.scheduled_at() or 'desactivado')}</p>
 {err}
 <form method=post action=/panel/reindex style="display:inline"><button class=btn name=mode value=new {'disabled' if st['running'] else ''}>▶ Reindexar nuevo</button></form>
 <form method=post action=/panel/reindex style="display:inline"><button class="btn blue" name=mode value=all {'disabled' if st['running'] else ''}>↻ Reindexar todo</button></form>
+<div id=psec style="margin-top:14px">
+  <div class=bar><i id=pbar style="width:{p.get('percent',0)}%"></i><span id=ppct>{p.get('percent',0)}%</span></div>
+  <p class=muted id=pphase>{_esc(p.get('phase','inactivo'))} · {p.get('chunks',0)} chunks</p>
+  <div class=logbox id=plog>{plog}</div>
+</div>
 </div></div>
 
 <div class=win><div class=tb>Configuración del modelo (Groq)</div><div class=bd>
@@ -116,8 +198,27 @@ def render(msg: str = "") -> str:
 </form>
 </div></div>
 
-<p class=muted>reexpo92-chatbot · servicio RAG. Este panel usa la service_role de Supabase; mantenlo tras login.</p>
-</div></body></html>"""
+<script>
+(function(){{
+  var bar=document.getElementById('pbar'),pct=document.getElementById('ppct'),
+      ph=document.getElementById('pphase'),log=document.getElementById('plog');
+  var wasRunning={running};
+  function paint(p){{
+    bar.style.width=(p.percent||0)+'%'; pct.textContent=(p.percent||0)+'%';
+    ph.textContent=(p.phase||'')+(p.total?(' · '+p.current+'/'+p.total):'')+' · '+(p.chunks||0)+' chunks';
+    log.textContent=(p.log||[]).join('\\n'); log.scrollTop=log.scrollHeight;
+  }}
+  function tick(){{
+    fetch('/panel/progress',{{credentials:'same-origin'}}).then(function(r){{return r.ok?r.json():null;}})
+      .then(function(d){{ if(!d)return; paint(d.progress||{{}});
+        if(d.running){{ setTimeout(tick,1500); }}
+        else if(wasRunning){{ setTimeout(function(){{location.reload();}},1200); }} }})
+      .catch(function(){{}});
+  }}
+  tick();
+}})();
+</script>"""
+    return _shell("resumen", body)
 
 
 def _groq_models() -> list[str]:

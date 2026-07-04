@@ -15,7 +15,7 @@ import time
 
 import requests
 
-from . import config, db, embeddings, settings
+from . import config, db, embeddings, ratelimit, settings
 
 # ── Rutas a las que Curro puede llevar al usuario (lista blanca) ─────────────────
 KNOWN_PAGES = {
@@ -108,6 +108,7 @@ def _groq_answer(question: str, chunks: list[dict]) -> tuple[str, str | None, di
         headers={"Authorization": f"Bearer {config.GROQ_API_KEY}"},
         json=body, timeout=30,
     )
+    ratelimit.save_from_headers(r.headers)  # captura x-ratelimit-* (aun si luego falla)
     r.raise_for_status()
     data = r.json()
     usage = data.get("usage", {})
@@ -146,7 +147,7 @@ def answer(question: str, session_id: str | None) -> dict:
     # 1) frases sociales
     for pat, resp in SOCIAL:
         if pat.search(q):
-            _log({"session_id": session_id, "question": q, "mode": "social",
+            _log({"session_id": session_id, "question": q, "answer": resp, "mode": "social",
                   "answered": True, "matched_count": 0, "used_llm": False,
                   "latency_ms": int((time.time() - t0) * 1000)})
             return {"answer": resp, "sources": [], "navigate": None, "mode": "social"}
@@ -173,7 +174,8 @@ def answer(question: str, session_id: str | None) -> dict:
 
     answered = bool(chunks) or used_llm
     _log({
-        "session_id": session_id, "question": q, "mode": mode, "answered": answered,
+        "session_id": session_id, "question": q, "answer": ans, "sources": srcs,
+        "mode": mode, "answered": answered,
         "matched_count": len(chunks), "top_similarity": top_sim, "top_source": top_src,
         "used_llm": used_llm, "model": meta.get("model"),
         "prompt_tokens": meta.get("prompt_tokens"), "completion_tokens": meta.get("completion_tokens"),

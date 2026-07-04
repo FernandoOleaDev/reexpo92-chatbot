@@ -17,13 +17,34 @@ from .config import CHUNK_CHARS, CHUNK_OVERLAP
 
 _run_lock = threading.Lock()
 
+
+def _fresh_progress() -> dict:
+    return {"phase": "inactivo", "current": 0, "total": 0, "percent": 0,
+            "chunks": 0, "log": [], "started_at": None, "finished_at": None}
+
+
 status: dict = {
     "running": False,
     "last_run": None,
     "last_mode": None,
     "last_report": None,
     "last_error": None,
+    "progress": _fresh_progress(),
 }
+
+
+def _plog(msg: str) -> None:
+    """Añade una línea al log de progreso (se muestra en vivo en el panel)."""
+    p = status["progress"]
+    ts = dt.datetime.now(dt.timezone.utc).strftime("%H:%M:%S")
+    p["log"].append(f"[{ts}] {msg}")
+    p["log"] = p["log"][-60:]  # solo las últimas líneas
+
+
+def _set_progress(current: int, total: int, chunks: int) -> None:
+    p = status["progress"]
+    p["current"], p["total"], p["chunks"] = current, total, chunks
+    p["percent"] = round(100 * current / total) if total else 0
 
 
 def _hash(text: str) -> str:
@@ -111,30 +132,45 @@ def run_index(full: bool = False, only: list[str] | None = None) -> dict:
         return {"skipped": "ya hay un indexado en curso"}
     status["running"] = True
     status["last_error"] = None
+    status["progress"] = _fresh_progress()
+    prog = status["progress"]
+    prog["phase"] = "recopilando"
+    prog["started_at"] = dt.datetime.now(dt.timezone.utc).isoformat()
     report: dict = {"processed": {}, "chunks": 0, "skipped_unchanged": 0}
     try:
+        _plog("Cargando el modelo de embeddings…")
         embeddings.warmup()
         enabled = settings.get("sources") or {}
         watermarks = {} if full else _read_watermarks()
         since_map = {t: watermarks.get(t) for t in sources.INCREMENTAL_TYPES}
 
+        _plog(f"Recopilando documentos ({'completo' if full else 'solo nuevo'})…")
+        docs = [d for d in sources.all_sources(since_map)
+                if (not only or d["source_type"] in only) and enabled.get(d["source_type"], True)]
+        total = len(docs)
+        by_type: dict[str, int] = {}
+        for d in docs:
+            by_type[d["source_type"]] = by_type.get(d["source_type"], 0) + 1
+        _plog("A procesar: " + (", ".join(f"{k}={v}" for k, v in by_type.items()) or "nada nuevo"))
+        prog["phase"] = "indexando"
+
         max_seen: dict[str, str] = {}
-        for doc in sources.all_sources(since_map):
+        for i, doc in enumerate(docs, 1):
             st = doc["source_type"]
-            if only and st not in only:
-                continue
-            if not enabled.get(st, True):
-                continue
             n = _replace_doc_chunks(doc)
             if n == 0:
                 report["skipped_unchanged"] += 1
             report["processed"][st] = report["processed"].get(st, 0) + 1
             report["chunks"] += n
+            _set_progress(i, total, report["chunks"])
+            if i % 10 == 0 or i == total:
+                _plog(f"{i}/{total} · {st} · «{(doc.get('title') or '')[:40]}» (+{report['chunks']} chunks)")
             ua = doc.get("updated_at")
             if st in sources.INCREMENTAL_TYPES and ua:
                 if st not in max_seen or ua > max_seen[st]:
                     max_seen[st] = ua
 
+        prog["phase"] = "guardando estado"
         # actualizar estado por fuente
         now = dt.datetime.now(dt.timezone.utc).isoformat()
         state_rows = []
@@ -150,10 +186,31 @@ def run_index(full: bool = False, only: list[str] | None = None) -> dict:
         status["last_report"] = report
         status["last_run"] = now
         status["last_mode"] = "completo" if full else "incremental"
+        prog["phase"] = "finalizado"
+        prog["finished_at"] = now
+        prog["percent"] = 100
+        _plog(f"✓ Listo: +{report['chunks']} chunks · {report['skipped_unchanged']} sin cambios.")
         return report
     except Exception as e:  # noqa: BLE001
         status["last_error"] = str(e)
+        prog["phase"] = "error"
+        _plog(f"✗ Error: {e}")
         raise
     finally:
         status["running"] = False
         _run_lock.release()
+
+
+def start_async(full: bool = False, only: list[str] | None = None) -> bool:
+    """Lanza el indexado en un hilo (para no bloquear el panel). False si ya corre."""
+    if status["running"]:
+        return False
+
+    def _job():
+        try:
+            run_index(full=full, only=only)
+        except Exception:
+            pass  # el error queda en status["last_error"] / progress
+
+    threading.Thread(target=_job, daemon=True).start()
+    return True
