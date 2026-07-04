@@ -344,6 +344,27 @@ _ABOUT_REPLY = (
     "investigación, modelado 3D, escaneo de objetos, mapa). Pregúntame lo que quieras."
 )
 
+# "¿Quién ha creado esto?" → la historia del creador (fija). No confundir con "¿quién eres?"
+# (eso es social: Curro). Sin enlaces ni fotos.
+_CREATOR = re.compile(
+    r"(quien (ha creado|creo|hizo|hace|monta|lleva|dirige|impulsa|desarroll|esta detras|hay detras|"
+    r"esta detras de)|de quien es (esto|este proyecto|la web|la pagina|re-?expo)|"
+    r"quien es el (creador|autor|responsable|fundador|desarrollador|dueño|dueno)|"
+    r"(creador|autor|fundador|responsable) de (esto|este proyecto|re-?expo|reexpo|la web)|"
+    r"quien lo (creo|hizo|hace|monto|desarroll)|quien esta detras|de quien es todo esto)",
+    re.I)
+_CREATOR_REPLY = (
+    "A re-Expo92 lo impulsa **[azul]Fernando Olea[/azul]**, la cara visible del proyecto — aunque no lo hace "
+    "solo: hay más gente estupenda trabajando con él 🌈.\n\n"
+    "Fernando es desarrollador de software especializado en [naranja]realidad virtual y aumentada[/naranja]. "
+    "Vivió la Expo 92 con apenas dos añitos, de la mano de sus padres y sus abuelos; era muy pequeño, pero "
+    "conserva muchas imágenes grabadas en la memoria… y, como todos los niños de entonces, la inevitable "
+    "obsesión por Curro 😄.\n\n"
+    "El proyecto nace de una ilusión muy personal: **recrear aquello que sus padres recuerdan con tanto cariño "
+    "para volver a vivirlo junto a ellos**. Es sin ánimo de lucro, hecho solo por revivir la Expo 92 y "
+    "conservarla para que no se pierda."
+)
+
 
 def answer(question: str, session_id: str | None) -> dict:
     t0 = time.time()
@@ -385,6 +406,13 @@ def answer(question: str, session_id: str | None) -> dict:
 
     if _ABOUT.search(_norm(q)):        # (a) por patrón de frase
         return _about()
+
+    # 3b) "¿quién ha creado esto?" → la historia de Fernando (fija, sin enlaces/fotos)
+    if _CREATOR.search(_norm(q)):
+        _log({"session_id": session_id, "question": q, "answer": _CREATOR_REPLY, "mode": "creator",
+              "answered": True, "matched_count": 0, "used_llm": False,
+              "latency_ms": int((time.time() - t0) * 1000)})
+        return {"answer": _CREATOR_REPLY, "sources": [], "images": [], "navigate": None, "mode": "creator"}
 
     # 4) recuperar contexto
     chunks = _retrieve(q, k=10)
