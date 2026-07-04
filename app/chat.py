@@ -12,10 +12,23 @@ from __future__ import annotations
 import json
 import re
 import time
+import unicodedata
 
 import requests
 
 from . import config, db, embeddings, ratelimit, settings
+
+
+def _norm(s: str) -> str:
+    return "".join(c for c in unicodedata.normalize("NFKD", (s or "").lower()) if not unicodedata.combining(c))
+
+
+_STOP = {"de", "la", "el", "los", "las", "del", "un", "una", "que", "como", "es", "se", "al",
+         "por", "para", "con", "sobre", "mas", "muy", "cual", "cuales", "hay", "esta", "este"}
+
+
+def _kw(text: str) -> set[str]:
+    return {w for w in re.findall(r"[a-z0-9ñ]+", _norm(text)) if len(w) > 3 and w not in _STOP}
 
 # ── Rutas a las que Curro puede llevar al usuario (lista blanca) ─────────────────
 KNOWN_PAGES = {
@@ -75,10 +88,6 @@ def _retrieve(question: str, k: int = 5) -> list[dict]:
     return rows or []
 
 
-# Umbral de similitud para MOSTRAR un enlace (por debajo = match débil, se descarta).
-SOURCE_MIN_SIM = 0.80
-
-
 def _source_url(c: dict) -> str | None:
     """URL del enlace. Los vídeos van a NUESTRA página (/archivo), no a YouTube."""
     st = c.get("source_type")
@@ -88,13 +97,53 @@ def _source_url(c: dict) -> str | None:
     return c.get("url")
 
 
-def _select_strong(chunks: list[dict]) -> list[dict]:
-    """Solo matches relevantes, con las re-memorias primero (si hay ficha, esa manda)."""
-    strong = [c for c in chunks if (c.get("similarity") or 0) >= SOURCE_MIN_SIM]
-    if not strong and chunks:
-        strong = chunks[:1]   # si ninguno pasa el umbral, deja al menos el mejor
-    order = {"re_memory": 0, "zone": 1, "video": 2, "photo": 3, "knowledge": 4, "ayuda": 5}
-    return sorted(strong, key=lambda c: order.get(c.get("source_type"), 9))
+# Ranking HÍBRIDO: e5 comprime las similitudes (0.7–1.0), así que el valor absoluto no
+# discrimina; usamos el ORDEN + una señal LÉXICA (coincidencia de palabras del título con
+# la pregunta) y un pequeño empujón a las re-memorias. Best-practice: dense + léxico.
+_TYPE_CAPS = {"knowledge": 1, "ayuda": 1, "video": 2, "photo": 2, "re_memory": 2, "zone": 2}
+_LEX_BONUS = 0.05     # por palabra del título que aparece en la pregunta (máx. 3)
+_RM_NUDGE = 0.03      # las re-memorias RELEVANTES (con coincidencia léxica) van primero
+_REL_MARGIN = 0.045   # descarta lo que quede a más de esto por debajo del mejor
+
+
+def _rank(chunks: list[dict], query: str) -> list[dict]:
+    qkw = _kw(query)
+    best: dict[tuple, dict] = {}
+    for c in chunks:                       # dedup por documento (los vídeos, por vídeo)
+        sid = c.get("source_id") or ""
+        doc = sid.split("#", 1)[0] if c.get("source_type") == "video" else sid
+        key = (c.get("source_type"), doc)
+        if key not in best or (c.get("similarity") or 0) > (best[key].get("similarity") or 0):
+            best[key] = c
+    items = list(best.values())
+    for c in items:
+        overlap = len(qkw & _kw(c.get("title") or ""))
+        # el empujón a re-memorias SOLO si la ficha comparte términos con la pregunta
+        # (evita colar un pabellón irrelevante en preguntas tipo "el foro cómo funciona")
+        nudge = _RM_NUDGE if (c.get("source_type") == "re_memory" and overlap > 0) else 0.0
+        c["_score"] = (c.get("similarity") or 0) + _LEX_BONUS * min(overlap, 3) + nudge
+    items.sort(key=lambda c: -c["_score"])
+    return items
+
+
+def _select_strong(chunks: list[dict], query: str) -> list[dict]:
+    items = _rank(chunks, query)
+    if not items:
+        return []
+    top = items[0]["_score"]
+    used: dict[str, int] = {}
+    out: list[dict] = []
+    for c in items:
+        if top - c["_score"] > _REL_MARGIN:   # (ordenado desc) demasiado flojo → paramos
+            break
+        st = c.get("source_type")
+        if used.get(st, 0) >= _TYPE_CAPS.get(st, 3):
+            continue
+        used[st] = used.get(st, 0) + 1
+        out.append(c)
+        if len(out) >= 3:
+            break
+    return out
 
 
 def _sources_from(strong: list[dict]) -> list[dict]:
@@ -203,6 +252,38 @@ def _log(row: dict) -> None:
         pass
 
 
+# Intención de navegación explícita ("llévame al foro", "quiero ir al mapa"): se resuelve
+# de forma DETERMINISTA (sin RAG), para no depender del LLM ni sacar enlaces de relleno.
+_GO_VERB = re.compile(
+    r"(ll[eé]vame|ll[eé]vate|quiero ir|c[oó]mo (voy|llego)|vamos a|vayamos|\bir a\b|\bir al\b|"
+    r"\bve a\b|\bve al\b|\bvete a\b|\babre\b|\babrir\b|ll[eé]vanos|acc[eé]der a)", re.I)
+_NAV_TARGETS = [
+    (re.compile(r"\bforo\b"), "/foro", "el foro"),
+    (re.compile(r"\bmapa\b"), "/mapa", "el mapa"),
+    (re.compile(r"\bzonas?\b"), "/zonas", "las zonas"),
+    (re.compile(r"\b(fotos?|galer|archivo fotogr)"), "/fotos", "el archivo de fotos"),
+    (re.compile(r"\b(videos?|v[ií]deos?)\b"), "/archivo?tab=videos", "los vídeos"),
+    (re.compile(r"\b(bibliograf|fuentes)"), "/bibliografia", "la bibliografía"),
+    (re.compile(r"\bmuseo\b"), "/museo", "el museo"),
+    (re.compile(r"\bcolabora"), "/colabora", "colaborar"),
+    (re.compile(r"\b(recinto|reconstrucc|recreaci)"), "/recreacion", "el recinto 3D"),
+    (re.compile(r"\b(modelos?|banco de modelos)\b"), "/modelos", "el banco de modelos"),
+    (re.compile(r"\b(re-?memorias?|catalogo|pabellones)\b"), "/re-memories", "el catálogo de re-memorias"),
+    (re.compile(r"\bayuda\b"), "/ayuda", "la ayuda"),
+    (re.compile(r"\brecopilaci"), "/recopilacion", "la recopilación"),
+]
+
+
+def _nav_intent(q: str):
+    if not _GO_VERB.search(q):
+        return None
+    nq = _norm(q)
+    for pat, route, label in _NAV_TARGETS:
+        if pat.search(nq):
+            return route, label
+    return None
+
+
 def answer(question: str, session_id: str | None) -> dict:
     t0 = time.time()
     q = (question or "").strip()
@@ -215,9 +296,20 @@ def answer(question: str, session_id: str | None) -> dict:
                   "latency_ms": int((time.time() - t0) * 1000)})
             return {"answer": resp, "sources": [], "images": [], "navigate": None, "mode": "social"}
 
-    # 2) recuperar contexto
-    chunks = _retrieve(q, k=5)
-    strong = _select_strong(chunks)
+    # 2) intención de navegación explícita ("llévame al foro") → determinista, sin RAG
+    nav = _nav_intent(q)
+    if nav:
+        route, label = nav
+        resp = f"¡Claro! Te llevo a {label} 👇"
+        srcs = [{"title": label[0].upper() + label[1:], "url": route, "type": "page"}]
+        _log({"session_id": session_id, "question": q, "answer": resp, "sources": srcs,
+              "mode": "nav", "answered": True, "matched_count": 0, "used_llm": False,
+              "latency_ms": int((time.time() - t0) * 1000)})
+        return {"answer": resp, "sources": srcs, "images": [], "navigate": route, "mode": "nav"}
+
+    # 3) recuperar contexto (top-k amplio; el ranking híbrido decide qué se muestra)
+    chunks = _retrieve(q, k=10)
+    strong = _select_strong(chunks, q)
     srcs = _sources_from(strong)
     imgs = _images_from(strong)
     top_sim = chunks[0].get("similarity") if chunks else None
@@ -227,7 +319,7 @@ def answer(question: str, session_id: str | None) -> dict:
     mode, used_llm, navigate, meta = "retrieval", False, None, {}
     if llm_on:
         try:
-            ans, navigate, meta = _groq_answer(q, chunks)
+            ans, navigate, meta = _groq_answer(q, chunks[:6])
             mode, used_llm = "llm", True
             if not ans:
                 ans = _retrieval_answer(chunks)
