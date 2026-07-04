@@ -81,24 +81,29 @@ def _shell(active: str, body: str, extra_head: str = "") -> str:
 </div></body></html>"""
 
 
-def _ratelimit_card() -> str:
-    d = ratelimit.latest()
-    if not d:
-        return ('<div class=win><div class=tb>Rate limit de Groq</div><div class=bd>'
-                '<p class=muted>Sin datos aún: se rellena tras la primera respuesta con LLM.</p></div></div>')
+def _rl_cell(label: str, remaining, limit, reset=None, lvl="") -> str:
+    val = f"{_esc(remaining)}/{_esc(limit)}" if remaining is not None else _esc(limit if limit is not None else "—")
+    sub = label + (f" · reinicio {_esc(reset)}" if reset else "")
+    return f'<div class="c {lvl}"><b>{val}</b><span>{sub}</span></div>'
+
+
+def _ratelimit_card(model: str) -> str:
+    v = ratelimit.monitor_view(model)
     lvl = ratelimit.status_level()
-    lim_r, rem_r = d.get("limit_requests"), d.get("remaining_requests")
-    used = f"{(lim_r - rem_r)}/{lim_r}" if (lim_r and rem_r is not None) else "—"
-    warn = ("<p class=err>⚠ Te acercas al límite diario de peticiones.</p>" if lvl == "crit"
-            else ("<p style='color:#E8852A;font-weight:800'>Atención: consumo alto.</p>" if lvl == "warn" else ""))
-    return f"""<div class=win><div class=tb>Rate limit de Groq</div><div class=bd>
-<div class=rl>
-  <div class="c {lvl}"><b>{_esc(rem_r)}</b><span>Peticiones restantes</span></div>
-  <div class=c><b>{_esc(lim_r)}</b><span>Límite de peticiones</span></div>
-  <div class=c><b>{_esc(d.get('reset_requests') or '—')}</b><span>Reinicio</span></div>
+    warn = ("<p class=err>⚠ Te acercas al límite DIARIO de peticiones (RPD).</p>" if lvl == "crit"
+            else ("<p style='color:#E8852A;font-weight:800'>Atención: consumo diario alto.</p>" if lvl == "warn" else ""))
+    live_note = ("actualizado: " + _esc(v.get("at")) if v.get("has_live")
+                 else "restantes en vivo tras la 1ª respuesta con LLM; límites del catálogo Groq")
+    return f"""<div class=win><div class=tb>Rate limit de Groq · modelo {_esc(model)}</div><div class=bd>
+<div class=rl style="grid-template-columns:repeat(4,1fr)">
+  {_rl_cell('RPM · peticiones/min', None, v['rpm'])}
+  {_rl_cell('RPD · peticiones/día', v['rpd']['remaining'], v['rpd']['limit'], v['rpd']['reset'], lvl)}
+  {_rl_cell('TPM · tokens/min', v['tpm']['remaining'], v['tpm']['limit'], v['tpm']['reset'])}
+  {_rl_cell('TPD · tokens/día', None, v['tpd'])}
 </div>
-<p class=muted>Consumidas: {used} · tokens restantes: {_esc(d.get('remaining_tokens'))}/{_esc(d.get('limit_tokens'))} · actualizado: {_esc(d.get('at'))}</p>
+<p class=muted>Restantes en vivo cuando aparecen (RPD/TPM); RPM y TPD son el tope del plan gratis. {live_note}.</p>
 {warn}
+<p class=muted>💡 ¿Pocas al día? <b>llama-3.1-8b-instant</b> da <b>14.400 RPD</b> (14×) y 500K TPD. Cámbialo abajo.</p>
 </div></div>"""
 
 
@@ -172,7 +177,7 @@ def render(msg: str = "") -> str:
 </div>
 </div></div>
 
-{_ratelimit_card()}
+{_ratelimit_card(cfg.get('groq_model'))}
 
 <div class=win><div class=tb>Índice · se genera en LOCAL</div><div class=bd>
 <p>Fragmentos indexados: <b>{ix['total']}</b> · última indexación: {_esc((ix['last_indexed_at'] or 'nunca')[:19])}</p>

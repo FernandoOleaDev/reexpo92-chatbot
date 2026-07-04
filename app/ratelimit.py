@@ -60,8 +60,48 @@ def latest() -> dict:
     return _latest
 
 
+# Catálogo de límites de la capa GRATIS de Groq (RPM/RPD/TPM/TPD), de su consola.
+# Las cabeceras solo dan RPD (limit_requests) y TPM (limit_tokens); RPM y TPD salen de aquí.
+GROQ_LIMITS = {
+    "openai/gpt-oss-20b":            {"rpm": 30, "rpd": 1000,  "tpm": 8000,  "tpd": 200000},
+    "openai/gpt-oss-120b":           {"rpm": 30, "rpd": 1000,  "tpm": 8000,  "tpd": 200000},
+    "openai/gpt-oss-safeguard-20b":  {"rpm": 30, "rpd": 1000,  "tpm": 8000,  "tpd": 200000},
+    "llama-3.1-8b-instant":          {"rpm": 30, "rpd": 14400, "tpm": 6000,  "tpd": 500000},
+    "llama-3.3-70b-versatile":       {"rpm": 30, "rpd": 1000,  "tpm": 12000, "tpd": 100000},
+    "meta-llama/llama-4-scout-17b-16e-instruct": {"rpm": 30, "rpd": 1000, "tpm": 30000, "tpd": 500000},
+    "qwen/qwen3-32b":                {"rpm": 60, "rpd": 1000,  "tpm": 6000,  "tpd": 500000},
+    "qwen/qwen3.6-27b":              {"rpm": 30, "rpd": 1000,  "tpm": 8000,  "tpd": 200000},
+    "allam-2-7b":                    {"rpm": 30, "rpd": 7000,  "tpm": 6000,  "tpd": 500000},
+    "groq/compound":                 {"rpm": 30, "rpd": 250,   "tpm": 70000, "tpd": None},
+    "groq/compound-mini":            {"rpm": 30, "rpd": 250,   "tpm": 70000, "tpd": None},
+}
+
+
+def monitor_view(model: str) -> dict:
+    """Vista combinada para el panel: límites del catálogo + restantes EN VIVO (cabeceras)."""
+    cat = GROQ_LIMITS.get(model, {})
+    live = latest()
+    return {
+        "model": model,
+        "rpm": cat.get("rpm"),
+        "tpd": cat.get("tpd"),
+        "rpd": {
+            "limit": live.get("limit_requests") or cat.get("rpd"),
+            "remaining": live.get("remaining_requests"),
+            "reset": live.get("reset_requests"),
+        },
+        "tpm": {
+            "limit": live.get("limit_tokens") or cat.get("tpm"),
+            "remaining": live.get("remaining_tokens"),
+            "reset": live.get("reset_tokens"),
+        },
+        "at": live.get("at"),
+        "has_live": bool(live),
+    }
+
+
 def status_level() -> str:
-    """'ok' | 'warn' | 'crit' según cuántas peticiones quedan (para colorear el panel)."""
+    """'ok' | 'warn' | 'crit' según cuántas peticiones diarias quedan (colorea el panel)."""
     d = latest()
     lim, rem = d.get("limit_requests"), d.get("remaining_requests")
     if not lim or rem is None:
