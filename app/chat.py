@@ -128,6 +128,9 @@ _TYPE_CAPS = {"knowledge": 1, "ayuda": 1, "video": 2, "photo": 2, "re_memory": 2
 _LEX_BONUS = 0.05     # por palabra del título que aparece en la pregunta (máx. 3)
 _RM_NUDGE = 0.03      # las re-memorias RELEVANTES (con coincidencia léxica) van primero
 _REL_MARGIN = 0.045   # descarta lo que quede a más de esto por debajo del mejor
+_STRONG_FLOOR = 0.87  # similitud a partir de la cual un match "cuenta" aunque no comparta palabras
+# Palabras ubicuas (salen en casi todo) que NO cuentan como "anclaje" real a la pregunta.
+_GROUND_STOP = {"expo", "expo92", "sevilla", "exposicion", "1992", "pabellon", "pabellones", "recinto"}
 
 
 def _rank(chunks: list[dict], query: str) -> list[dict]:
@@ -141,10 +144,12 @@ def _rank(chunks: list[dict], query: str) -> list[dict]:
             best[key] = c
     items = list(best.values())
     for c in items:
-        overlap = len(qkw & _kw(c.get("title") or ""))
+        common = qkw & _kw(c.get("title") or "")
+        overlap = len(common)
+        # "anclaje": coincidencias que NO sean palabras ubicuas (expo, sevilla, pabellón…)
+        c["_ground"] = len(common - _GROUND_STOP)
         # el empujón a re-memorias SOLO si la ficha comparte términos con la pregunta
-        # (evita colar un pabellón irrelevante en preguntas tipo "el foro cómo funciona")
-        nudge = _RM_NUDGE if (c.get("source_type") == "re_memory" and overlap > 0) else 0.0
+        nudge = _RM_NUDGE if (c.get("source_type") == "re_memory" and c["_ground"] > 0) else 0.0
         c["_score"] = (c.get("similarity") or 0) + _LEX_BONUS * min(overlap, 3) + nudge
     items.sort(key=lambda c: -c["_score"])
     return items
@@ -160,6 +165,10 @@ def _select_strong(chunks: list[dict], query: str) -> list[dict]:
     for c in items:
         if top - c["_score"] > _REL_MARGIN:   # (ordenado desc) demasiado flojo → paramos
             break
+        # ANCLAJE: solo se muestra si comparte términos significativos con la pregunta
+        # o es un match semántico muy fuerte. Si no, no tiene sentido enlazarlo.
+        if c.get("_ground", 0) == 0 and (c.get("similarity") or 0) < _STRONG_FLOOR:
+            continue
         st = c.get("source_type")
         if used.get(st, 0) >= _TYPE_CAPS.get(st, 3):
             continue
@@ -185,7 +194,10 @@ def _sources_from(strong: list[dict]) -> list[dict]:
 
 
 def _images_from(strong: list[dict]) -> list[dict]:
-    """Imágenes para mostrar en el chat: fotos de comunidad/archivo y de re-memorias."""
+    """Imágenes para el chat, SOLO si la pregunta es realmente visual: el mejor resultado
+    debe ser una foto o una ficha (si lidera texto/ayuda/vídeo, no metemos fotos)."""
+    if not strong or strong[0].get("source_type") not in ("photo", "re_memory"):
+        return []
     images: list[dict] = []
     photo_ids = [c["source_id"] for c in strong if c.get("source_type") == "photo" and c.get("source_id")]
     rm_ids = [c["source_id"] for c in strong if c.get("source_type") == "re_memory" and c.get("source_id")]
@@ -309,6 +321,18 @@ def _nav_intent(q: str):
     return None
 
 
+# Preguntas "meta" ("¿de qué va esto?", "¿qué es re-Expo92?") → explicar el PROYECTO,
+# no describir las fotos/vídeos que toque recuperar. Se fuerza la búsqueda al artículo
+# "Qué es re-Expo92" usando una consulta canónica.
+_ABOUT = re.compile(
+    r"(de que (va|trata)|para que (sirve|es) (esto|esta|este|la web|la pagina)|"
+    r"que es (esto|esta|este|re-?expo|reexpo|la web|la pagina|el proyecto|el sitio|la plataforma)|"
+    r"explicame (el proyecto|esto|reexpo|re-?expo|la web)|que proyecto es|de que trata (esto|la web|la pagina))",
+    re.I)
+_ABOUT_QUERY = ("Qué es re-Expo92: el proyecto de recreación 3D colaborativa de la Expo 92 de Sevilla. "
+                "De qué trata esta web y qué se puede hacer en ella.")
+
+
 def answer(question: str, session_id: str | None) -> dict:
     t0 = time.time()
     q = (question or "").strip()
@@ -339,11 +363,14 @@ def answer(question: str, session_id: str | None) -> dict:
               "latency_ms": int((time.time() - t0) * 1000)})
         return {"answer": resp, "sources": srcs, "images": [], "navigate": route, "mode": "nav"}
 
-    # 3) recuperar contexto (top-k amplio; el ranking híbrido decide qué se muestra)
-    chunks = _retrieve(q, k=10)
-    strong = _select_strong(chunks, q)
-    srcs = _sources_from(strong)
-    imgs = _images_from(strong)
+    # 3) recuperar contexto. Si es una pregunta "meta" (¿de qué va esto?), se busca el
+    #    artículo del PROYECTO y NO se ponen enlaces ni fotos (no aportan ahí).
+    is_about = bool(_ABOUT.search(_norm(q)))
+    rq = _ABOUT_QUERY if is_about else q
+    chunks = _retrieve(rq, k=10)
+    strong = _select_strong(chunks, rq)
+    srcs = [] if is_about else _sources_from(strong)
+    imgs = [] if is_about else _images_from(strong)
     top_sim = chunks[0].get("similarity") if chunks else None
     top_src = chunks[0].get("source_type") if chunks else None
 
