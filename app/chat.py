@@ -10,6 +10,7 @@ Flujo de una pregunta:
 from __future__ import annotations
 
 import json
+import random
 import re
 import time
 import unicodedata
@@ -366,6 +367,46 @@ _CREATOR_REPLY = (
 )
 
 
+# "Dame un dato curioso / sorpréndeme" → una re-memoria AL AZAR cada vez (varía).
+_CURIOUS = re.compile(
+    r"(dato curioso|algo curioso|curiosidad(es)?|sorpr[eé]ndeme|dame un dato|dime algo (curioso|interesante)|"
+    r"cuentame algo (curioso|interesante)|un dato (curioso|random|al azar)|algo interesante)",
+    re.I)
+_rm_total = {"n": None}
+
+
+def _random_rememoria() -> dict | None:
+    if _rm_total["n"] is None:
+        try:
+            _rm_total["n"] = db.count("re_memories")
+        except Exception:
+            _rm_total["n"] = 0
+    total = _rm_total["n"] or 0
+    if not total:
+        return None
+    offset = random.randint(0, max(0, total - 1))
+    try:
+        rows = db.select("re_memories", {
+            "select": "id,name,description", "order": "id.asc",
+            "offset": str(offset), "limit": "1",
+        })
+    except Exception:
+        return None
+    r = rows[0] if rows else None
+    # si no tiene descripción, un par de reintentos para que el dato tenga chicha
+    tries = 0
+    while r is not None and not (r.get("description") or "").strip() and tries < 4:
+        off = random.randint(0, max(0, total - 1))
+        try:
+            rr = db.select("re_memories", {"select": "id,name,description", "order": "id.asc",
+                                           "offset": str(off), "limit": "1"})
+            r = rr[0] if rr else r
+        except Exception:
+            break
+        tries += 1
+    return r
+
+
 def answer(question: str, session_id: str | None) -> dict:
     t0 = time.time()
     q = (question or "").strip()
@@ -413,6 +454,34 @@ def answer(question: str, session_id: str | None) -> dict:
               "answered": True, "matched_count": 0, "used_llm": False,
               "latency_ms": int((time.time() - t0) * 1000)})
         return {"answer": _CREATOR_REPLY, "sources": [], "images": [], "navigate": None, "mode": "creator"}
+
+    # 3c) "dame un dato curioso / sorpréndeme" → una re-memoria AL AZAR (distinta cada vez)
+    if _CURIOUS.search(_norm(q)):
+        rm = _random_rememoria()
+        if rm:
+            name = (rm.get("name") or "un elemento de la Expo").strip()
+            chunk = {"source_type": "re_memory", "source_id": rm["id"], "title": name,
+                     "url": f"/re-memories/{rm['id']}",
+                     "content": f"{name}. {(rm.get('description') or '')}"[:1400], "similarity": 1.0}
+            used_llm, meta = False, {}
+            if bool(settings.get("llm_enabled", True)) and bool(config.GROQ_API_KEY):
+                try:
+                    ans, _nav, meta = _groq_answer(
+                        f"Cuéntame UN dato curioso, breve y con gancho (1-2 frases), sobre «{name}» de la Expo 92. "
+                        "Empieza de forma variada (no siempre igual).", [chunk])
+                    used_llm = True
+                except Exception:  # noqa: BLE001
+                    ans = ""
+            if not used_llm or not ans:
+                desc = (rm.get("description") or "").strip()
+                ans = (f"¿Sabías esto de [naranja]{name}[/naranja]? " + desc[:220]) if desc else \
+                    f"Échale un ojo a [naranja]{name}[/naranja], una joya de la Expo 92. 👇"
+            imgs = _images_from([chunk])
+            srcs = [{"title": name, "url": f"/re-memories/{rm['id']}", "type": "re_memory"}]
+            _log({"session_id": session_id, "question": q, "answer": ans, "sources": srcs,
+                  "mode": "curious", "answered": True, "matched_count": 1, "used_llm": used_llm,
+                  "model": meta.get("model"), "latency_ms": int((time.time() - t0) * 1000)})
+            return {"answer": ans, "sources": srcs, "images": imgs, "navigate": None, "mode": "curious"}
 
     # 4) recuperar contexto
     chunks = _retrieve(q, k=10)
