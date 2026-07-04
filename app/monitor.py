@@ -12,6 +12,20 @@ def _since_iso(days: int) -> str:
     return (dt.datetime.now(dt.timezone.utc) - dt.timedelta(days=days)).isoformat()
 
 
+def index_state() -> dict:
+    """Estado del índice leído de la BD (refleja también el indexado LOCAL)."""
+    try:
+        rows = db.select("rag_index_state", {
+            "select": "source_type,chunk_count,last_indexed_at",
+            "order": "source_type.asc",
+        })
+    except Exception:
+        rows = []
+    total = sum((r.get("chunk_count") or 0) for r in rows)
+    last = max((r.get("last_indexed_at") or "" for r in rows), default="")
+    return {"sources": rows, "total": total, "last_indexed_at": last or None}
+
+
 def conversations(limit: int = 300) -> list[dict]:
     """Últimas preguntas agrupadas por sesión (para la vista de conversaciones)."""
     try:

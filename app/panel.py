@@ -3,7 +3,7 @@ from __future__ import annotations
 
 import html
 
-from . import config, indexer, monitor, ratelimit, scheduler, settings
+from . import config, monitor, ratelimit, settings
 
 # modelos de Groq recomendados por defecto (el dropdown se completa en vivo si hay clave)
 FALLBACK_MODELS = [
@@ -126,9 +126,9 @@ def render_conversations() -> str:
 
 
 def render(msg: str = "") -> str:
-    st = indexer.status
     cfg = settings.get_all(force=True)
     ov = monitor.overview(7)
+    ix = monitor.index_state()
     models = _groq_models()
 
     cur_model = cfg.get("groq_model")
@@ -150,11 +150,12 @@ def render(msg: str = "") -> str:
     gap_rows = "".join(f"<tr><td class=gap>{_esc(q)}</td><td>{n}</td></tr>" for q, n in ov["content_gaps"]) \
         or "<tr><td colspan=2 class=muted>Nada sin responder 🎉</td></tr>"
 
-    err = f'<p class="err">⚠ Último error: {_esc(st["last_error"])}</p>' if st.get("last_error") else ""
     banner = f'<div class="win"><div class="bd ok">{_esc(msg)}</div></div>' if msg else ""
-    p = st["progress"]
-    plog = _esc("\n".join(p.get("log") or []))
-    running = "true" if st["running"] else "false"
+    ix_rows = "".join(
+        f"<tr><td>{_esc(r.get('source_type'))}</td><td>{_esc(r.get('chunk_count'))}</td>"
+        f"<td>{_esc((r.get('last_indexed_at') or '')[:19])}</td></tr>"
+        for r in ix["sources"]
+    ) or "<tr><td colspan=3 class=muted>Sin indexar aún: ejecuta index_local.py</td></tr>"
 
     body = f"""{banner}
 <div class=win><div class=tb>Monitorización · últimos {ov['days']} días</div><div class=bd>
@@ -173,16 +174,13 @@ def render(msg: str = "") -> str:
 
 {_ratelimit_card()}
 
-<div class=win><div class=tb>Índice</div><div class=bd>
-<p>Modo del último: {_esc(st.get('last_mode') or '—')} · cron: {_esc(scheduler.scheduled_at() or 'desactivado')}</p>
-{err}
-<form method=post action=/panel/reindex style="display:inline"><button class=btn name=mode value=new {'disabled' if st['running'] else ''}>▶ Reindexar nuevo</button></form>
-<form method=post action=/panel/reindex style="display:inline"><button class="btn blue" name=mode value=all {'disabled' if st['running'] else ''}>↻ Reindexar todo</button></form>
-<div id=psec style="margin-top:14px">
-  <div class=bar><i id=pbar style="width:{p.get('percent',0)}%"></i><span id=ppct>{p.get('percent',0)}%</span></div>
-  <p class=muted id=pphase>{_esc(p.get('phase','inactivo'))} · {p.get('chunks',0)} chunks</p>
-  <div class=logbox id=plog>{plog}</div>
-</div>
+<div class=win><div class=tb>Índice · se genera en LOCAL</div><div class=bd>
+<p>Fragmentos indexados: <b>{ix['total']}</b> · última indexación: {_esc((ix['last_indexed_at'] or 'nunca')[:19])}</p>
+<table><tr><th>Fuente</th><th>Fragmentos</th><th>Última</th></tr>{ix_rows}</table>
+<p class=muted style="margin-top:12px">⚠ El indexado NO se hace en el servidor (en Railway agota la memoria). Ejecútalo en tu ordenador — verás el progreso por consola:</p>
+<div class=logbox style="height:auto">cd reexpo92-chatbot
+source .venv/bin/activate
+python3 index_local.py --all   # completo · sin --all = solo lo nuevo</div>
 </div></div>
 
 <div class=win><div class=tb>Configuración del modelo (Groq)</div><div class=bd>
@@ -196,28 +194,7 @@ def render(msg: str = "") -> str:
 <p class=muted>{'✓ Clave Groq detectada.' if config.GROQ_API_KEY else '⚠ Sin GROQ_API_KEY: el chat funciona en modo solo búsqueda.'} La lista de modelos se actualiza en vivo desde Groq si hay clave.</p>
 <button class=btn type=submit>Guardar</button>
 </form>
-</div></div>
-
-<script>
-(function(){{
-  var bar=document.getElementById('pbar'),pct=document.getElementById('ppct'),
-      ph=document.getElementById('pphase'),log=document.getElementById('plog');
-  var wasRunning={running};
-  function paint(p){{
-    bar.style.width=(p.percent||0)+'%'; pct.textContent=(p.percent||0)+'%';
-    ph.textContent=(p.phase||'')+(p.total?(' · '+p.current+'/'+p.total):'')+' · '+(p.chunks||0)+' chunks';
-    log.textContent=(p.log||[]).join('\\n'); log.scrollTop=log.scrollHeight;
-  }}
-  function tick(){{
-    fetch('/panel/progress',{{credentials:'same-origin'}}).then(function(r){{return r.ok?r.json():null;}})
-      .then(function(d){{ if(!d)return; paint(d.progress||{{}});
-        if(d.running){{ setTimeout(tick,1500); }}
-        else if(wasRunning){{ setTimeout(function(){{location.reload();}},1200); }} }})
-      .catch(function(){{}});
-  }}
-  tick();
-}})();
-</script>"""
+</div></div>"""
     return _shell("resumen", body)
 
 

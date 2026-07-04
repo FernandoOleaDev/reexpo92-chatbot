@@ -33,8 +33,10 @@ EMBED_MODEL = _clean(os.getenv("EMBED_MODEL")) or "intfloat/multilingual-e5-base
 EMBED_DIM = int(_clean(os.getenv("EMBED_DIM")) or "768")
 
 # ── Indexado ────────────────────────────────────────────────────────────────────
-# Cron interno (APScheduler). Formato "HH:MM" hora del servidor, o vacío para desactivar.
-REINDEX_CRON = _clean(os.getenv("REINDEX_CRON")) or "03:00"
+# Cron interno (APScheduler). Formato "HH:MM" UTC, o vacío para desactivar.
+# DESACTIVADO por defecto: el indexado se hace EN LOCAL (index_local.py), porque
+# hacerlo en Railway agota la RAM (OOM). Servir preguntas sí cabe.
+REINDEX_CRON = _clean(os.getenv("REINDEX_CRON"))
 CHUNK_CHARS = int(_clean(os.getenv("CHUNK_CHARS")) or "900")
 CHUNK_OVERLAP = int(_clean(os.getenv("CHUNK_OVERLAP")) or "150")
 
