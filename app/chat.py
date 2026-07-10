@@ -367,6 +367,26 @@ _CREATOR_REPLY = (
 )
 
 
+# "¿Quiénes colaboran? / MetaExpo92 / instituciones amigas" → lista fija de colaboradores.
+_COLAB = re.compile(
+    r"(colaboradores?|instituciones amigas|quien(es)? colabora|con quien(es)? (colabora|trabaj)|"
+    r"meta-?expo|metaexpo92|legado expo|expo92\.?es|proyecto hermano|socios del proyecto|partners|"
+    r"instituciones? colaborador|entidades? amigas?|quien(es)? (esta|estan) con (vosotros|el proyecto))",
+    re.I)
+_COLAB_REPLY = (
+    "re-Expo92 tiene colaboradores oficiales e instituciones amigas 🤝:\n\n"
+    "- **[naranja]MetaExpo92[/naranja]** (metaexpo92.com): el **proyecto hermano** que llevaba años modelando "
+    "la Expo 92. Ha cedido sus **modelos 3D** y su proyecto de **Unity** a re-Expo92 para que la reconstrucción "
+    "pueda continuar. Sus autores son Pedro Garrido González y Fernando Suárez Millán.\n"
+    "- **Javier Martín López** (Secretario de Legado Expo): revisa datos de las fichas, avisa de errores y aporta "
+    "documentación histórica de gran valor.\n"
+    "- **[azul]Legado Expo Sevilla[/azul]** (legadoexposevilla.org): la asociación que conserva y difunde la "
+    "memoria de la Expo 92.\n"
+    "- **[azul]Expo92.es[/azul]**: más de 1.000 imágenes de su archivo alimentan nuestra galería, con su crédito.\n\n"
+    "Los tienes a todos en la sección de colaboradores 👇"
+)
+
+
 # "Dame un dato curioso / sorpréndeme" → una re-memoria AL AZAR cada vez (varía).
 _CURIOUS = re.compile(
     r"(dato curioso|algo curioso|curiosidad(es)?|sorpr[eé]ndeme|dame un dato|dime algo (curioso|interesante)|"
@@ -454,6 +474,14 @@ def answer(question: str, session_id: str | None) -> dict:
               "answered": True, "matched_count": 0, "used_llm": False,
               "latency_ms": int((time.time() - t0) * 1000)})
         return {"answer": _CREATOR_REPLY, "sources": [], "images": [], "navigate": None, "mode": "creator"}
+
+    # 3b2) "¿quiénes colaboran? / MetaExpo92" → lista fija de colaboradores + enlace
+    if _COLAB.search(_norm(q)):
+        srcs = [{"title": "Colaboradores", "url": "/colaboradores", "type": "page"}]
+        _log({"session_id": session_id, "question": q, "answer": _COLAB_REPLY, "sources": srcs,
+              "mode": "colab", "answered": True, "matched_count": 0, "used_llm": False,
+              "latency_ms": int((time.time() - t0) * 1000)})
+        return {"answer": _COLAB_REPLY, "sources": srcs, "images": [], "navigate": None, "mode": "colab"}
 
     # 3c) "dame un dato curioso / sorpréndeme" → una re-memoria AL AZAR (distinta cada vez)
     if _CURIOUS.search(_norm(q)):
