@@ -29,6 +29,7 @@ app.add_middleware(
 
 _boot: dict = {}
 _rate: dict[str, list[float]] = {}
+_global_hits: list[float] = []
 
 
 @app.on_event("startup")
@@ -46,14 +47,42 @@ class ChatIn(BaseModel):
     session_id: str | None = None
 
 
-def _rate_ok(key: str) -> bool:
+def _client_ip(request: Request) -> str:
+    """IP real del visitante. Railway habla por proxy, así que la de verdad
+    viene en X-Forwarded-For; `request.client.host` sería la del proxy."""
+    fwd = request.headers.get("x-forwarded-for", "")
+    if fwd:
+        return fwd.split(",")[0].strip()[:64]
+    return request.client.host if request.client else "desconocido"
+
+
+def _prune() -> None:
+    """Tira las ventanas vencidas. Sin esto el diccionario crece sin fin: basta
+    con mandar un `session_id` distinto en cada pregunta para llenar la RAM."""
+    now = time.time()
+    for k in [k for k, v in _rate.items() if not v or now - v[-1] > 120]:
+        _rate.pop(k, None)
+
+
+def _rate_ok(key: str, limite: int) -> bool:
     now = time.time()
     hits = [t for t in _rate.get(key, []) if now - t < 60]
-    if len(hits) >= config.CHAT_RATE_PER_MIN:
+    if len(hits) >= limite:
         _rate[key] = hits
         return False
     hits.append(now)
     _rate[key] = hits
+    return True
+
+
+def _global_ok() -> bool:
+    """Techo para todo el servicio, no por visitante."""
+    global _global_hits
+    now = time.time()
+    _global_hits = [t for t in _global_hits if now - t < 60]
+    if len(_global_hits) >= config.CHAT_RATE_GLOBAL_PER_MIN:
+        return False
+    _global_hits.append(now)
     return True
 
 
@@ -64,8 +93,14 @@ def post_chat(body: ChatIn, request: Request):
         raise HTTPException(400, "Pregunta vacía")
     if len(q) > config.CHAT_MAX_CHARS:
         q = q[: config.CHAT_MAX_CHARS]
-    key = body.session_id or (request.client.host if request.client else "anon")
-    if not _rate_ok(key):
+    # El límite se cuenta por IP: el `session_id` lo elige el cliente, así que
+    # por sí solo se saltaba mandando uno nuevo en cada pregunta.
+    _prune()
+    if not _global_ok():
+        raise HTTPException(429, "Curro está saturado ahora mismo. Prueba en un minuto 🙂")
+    if not _rate_ok(f"ip:{_client_ip(request)}", config.CHAT_RATE_PER_MIN):
+        raise HTTPException(429, "Demasiadas preguntas seguidas, espera un momento 🙂")
+    if body.session_id and not _rate_ok(f"s:{body.session_id[:64]}", config.CHAT_RATE_PER_MIN):
         raise HTTPException(429, "Demasiadas preguntas seguidas, espera un momento 🙂")
     return chat.answer(q, body.session_id)
 

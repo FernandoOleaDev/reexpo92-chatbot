@@ -59,8 +59,11 @@ def cors_origins() -> list[str]:
 
 
 # ── Anti-abuso del endpoint público /chat ───────────────────────────────────────
-CHAT_RATE_PER_MIN = int(_clean(os.getenv("CHAT_RATE_PER_MIN")) or "20")   # por sesión/IP
+CHAT_RATE_PER_MIN = int(_clean(os.getenv("CHAT_RATE_PER_MIN")) or "20")   # por IP y por sesión
 CHAT_MAX_CHARS = int(_clean(os.getenv("CHAT_MAX_CHARS")) or "500")
+# Techo global: protege la cuota gratuita de Groq de un bucle automatizado.
+# Si se supera, Curro responde 429 SIN llegar a llamar al modelo.
+CHAT_RATE_GLOBAL_PER_MIN = int(_clean(os.getenv("CHAT_RATE_GLOBAL_PER_MIN")) or "120")
 
 
 def missing_required() -> list[str]:
