@@ -305,7 +305,6 @@ _NAV_TARGETS = [
     (re.compile(r"\bmuseo\b"), "/museo", "el museo"),
     (re.compile(r"\bcolabora"), "/colabora", "colaborar"),
     (re.compile(r"\b(recinto|reconstrucc|recreaci)"), "/recreacion", "el recinto 3D"),
-    (re.compile(r"\b(modelos?|banco de modelos)\b"), "/modelos", "el banco de modelos"),
     (re.compile(r"\b(re-?memorias?|catalogo|pabellones)\b"), "/re-memories", "el catálogo de re-memorias"),
     (re.compile(r"\bayuda\b"), "/ayuda", "la ayuda"),
     (re.compile(r"\brecopilaci"), "/recopilacion", "la recopilación"),
